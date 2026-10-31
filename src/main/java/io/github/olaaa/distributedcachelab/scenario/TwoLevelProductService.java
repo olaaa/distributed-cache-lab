@@ -61,8 +61,11 @@ public class TwoLevelProductService implements LabCache {
     private Mono<Product> loadFromRedisOrSource(long id) {
         String redisKey = REDIS_KEY_PREFIX + id;
         /*
-         * Mono.defer внутри switchIfEmpty: без него source.load(id) вызывался бы при сборке цепочки,
-         * даже когда товар нашёлся в Redis (ловушка switchIfEmpty из разбора про Reactor).
+         * Аргумент switchIfEmpty Java вычисляет при сборке, поэтому без Mono.defer метод source.load(id)
+         * вызывался бы и тогда, когда товар нашёлся в Redis. С нынешним ProductSource это безвредно:
+         * его тело само завёрнуто в Mono.defer, вызов только собирает описание, а счётчик, флаг сбоя
+         * и SELECT сработают лишь при подписке, то есть при промахе в Redis. Mono.defer здесь —
+         * защита: этот метод не полагается на то, что чужой load ленивый.
          */
         return Mono.defer(() -> {
                     redisReads.incrementAndGet();
