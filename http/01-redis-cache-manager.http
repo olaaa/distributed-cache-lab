@@ -1,0 +1,14 @@
+### Сценарий 1. RedisCacheManager и сериализация. Подробно: docs/scenarios/01-redis-cache-manager.md
+### Что лежит в Redis: docker compose exec redis redis-cli GET products::1 (и TTL products::1)
+
+### 1. Сбросить счётчик источника и очистить Redis
+POST http://localhost:8080/lab/reset
+
+### 2. Товар через @Cacheable с кэшем в Redis. Выполните несколько раз
+GET http://localhost:8080/products/1?via=REDIS
+
+### 3. sourceCalls = 1
+GET http://localhost:8080/lab/stats
+
+### 4. Ловушка: кэш с настройками по умолчанию (JDK-сериализация, Product без Serializable) — ответ 500
+GET http://localhost:8080/products/1?via=REDIS_DEFAULT_CONFIG

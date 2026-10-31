@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: distributed-cache-lab
+  sql:
+    init:
+      mode: always
+
+catalog:
+  source:
+    # Искусственная задержка источника: так промах кэша заметен и в тестах, и вручную.
+    delay: 50ms
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,caches
