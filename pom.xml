@@ -41,10 +41,21 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-r2dbc</artifactId>
         </dependency>
+        <!--
+            Приносит spring-boot-data-redis: автоконфигурацию подключения к Redis
+            (RedisConnectionFactory на Lettuce, свойства spring.data.redis.*, ReactiveStringRedisTemplate,
+            адрес Redis из compose.yaml и из контейнера Testcontainers), а через неё —
+            Spring Data Redis (RedisCacheManager, RedisCache, сериализаторы) и клиент Lettuce.
+        -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis-reactive</artifactId>
         </dependency>
+        <!--
+            Приносит spring-boot-cache: автоконфигурацию кэша Spring Boot — выбор провайдера
+            и создание CacheManager (здесь RedisCacheManager), свойства spring.cache.*,
+            RedisCacheManagerBuilderCustomizer. Плюс spring-context-support.
+        -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-cache</artifactId>
