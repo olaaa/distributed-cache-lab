@@ -1,0 +1,25 @@
+### Сценарий 2. TTL с разбросом. Подробно: docs/scenarios/02-ttl-jitter.md
+### Сроки после шагов 2–7:
+### for id in 1 2 3; do docker compose exec redis redis-cli TTL products::$id; done
+### for id in 1 2 3; do docker compose exec redis redis-cli TTL productsJittered::$id; done
+
+### 1. Сбросить счётчик источника и очистить Redis
+POST http://localhost:8080/lab/reset
+
+### 2. Фиксированный срок: товар 1
+GET http://localhost:8080/products/1?via=REDIS
+
+### 3. Фиксированный срок: товар 2
+GET http://localhost:8080/products/2?via=REDIS
+
+### 4. Фиксированный срок: товар 3
+GET http://localhost:8080/products/3?via=REDIS
+
+### 5. Срок с разбросом: товар 1
+GET http://localhost:8080/products/1?via=REDIS_JITTERED_TTL
+
+### 6. Срок с разбросом: товар 2
+GET http://localhost:8080/products/2?via=REDIS_JITTERED_TTL
+
+### 7. Срок с разбросом: товар 3
+GET http://localhost:8080/products/3?via=REDIS_JITTERED_TTL
