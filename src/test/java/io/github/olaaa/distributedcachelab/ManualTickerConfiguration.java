@@ -1,5 +1,7 @@
 package io.github.olaaa.distributedcachelab;
 
+import java.time.Clock;
+
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
@@ -12,5 +14,12 @@ public class ManualTickerConfiguration {
     @Primary
     ManualTicker manualTicker() {
         return new ManualTicker();
+    }
+
+    /* @Primary: часы приложения идут вместе с ManualTicker. */
+    @Bean
+    @Primary
+    Clock tickerClock(ManualTicker manualTicker) {
+        return new TickerClock(manualTicker);
     }
 }

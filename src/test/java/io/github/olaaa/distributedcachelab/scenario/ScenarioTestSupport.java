@@ -14,6 +14,7 @@ import io.github.olaaa.distributedcachelab.TestcontainersConfiguration;
 import io.github.olaaa.distributedcachelab.catalog.Product;
 import io.github.olaaa.distributedcachelab.catalog.ProductRepository;
 import io.github.olaaa.distributedcachelab.catalog.ProductSource;
+import io.github.olaaa.distributedcachelab.rates.RateProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -37,6 +38,10 @@ abstract class ScenarioTestSupport {
     @Autowired
     ProductSource source;
 
+    /* Поставщик курсов валют (сценарий 7). */
+    @Autowired
+    RateProvider rateProvider;
+
     /* Прямой доступ к Redis в обход кэша: посмотреть ключи, значения и срок жизни. */
     @Autowired
     ReactiveStringRedisTemplate redis;
@@ -56,6 +61,7 @@ abstract class ScenarioTestSupport {
         redis.execute(connection -> connection.serverCommands().flushDb()).blockLast();
         labCaches.forEach(LabCache::invalidateAll);
         source.reset();
+        rateProvider.reset();
     }
 
     /*

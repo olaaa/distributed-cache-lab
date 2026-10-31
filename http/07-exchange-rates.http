@@ -1,0 +1,21 @@
+### Сценарий 7. Курсы валют. Подробно: docs/scenarios/07-exchange-rates.md
+### Нужны две реплики: mvn spring-boot:run и во втором терминале — с уже недоступным поставщиком:
+### mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8081 --rates.provider.failing=true"
+
+### 1. Курс на 8080: прогрет при старте, к поставщику запрос не идёт
+GET http://localhost:8080/rates/USD
+
+### 2. Поставщик на 8080: calls = 3 (прогрев), failing = false
+GET http://localhost:8080/lab/rates/provider
+
+### 3. Курс на 8081: поставщик недоступен, курс взят из Redis — asOf тот же, что на 8080
+GET http://localhost:8081/rates/USD
+
+### 4. Поставщик на 8081: calls = 3 (неудачные попытки при прогреве), failing = true
+GET http://localhost:8081/lab/rates/provider
+
+### 5. Валюты нет ни у поставщика, ни в Redis — 503
+GET http://localhost:8081/rates/GBP
+
+### 6. Поднять поставщика на 8081
+POST http://localhost:8081/lab/rates/provider/recover

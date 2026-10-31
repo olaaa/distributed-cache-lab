@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.List;
 
 import io.github.olaaa.distributedcachelab.catalog.ProductSource;
+import io.github.olaaa.distributedcachelab.rates.RateProvider;
 import io.github.olaaa.distributedcachelab.scenario.BroadcastInvalidationProductService;
 import io.github.olaaa.distributedcachelab.scenario.CacheWritePause;
 import io.github.olaaa.distributedcachelab.scenario.LabCache;
@@ -30,19 +31,41 @@ public class LabController {
     private final List<LabCache> labCaches;
     private final ReactiveStringRedisTemplate redisTemplate;
     private final CacheWritePause cacheWritePause;
+    private final RateProvider rateProvider;
 
     public LabController(ProductSource source,
                          TwoLevelProductService twoLevelProductService,
                          BroadcastInvalidationProductService broadcastInvalidationProductService,
                          List<LabCache> labCaches,
                          ReactiveStringRedisTemplate redisTemplate,
-                         CacheWritePause cacheWritePause) {
+                         CacheWritePause cacheWritePause,
+                         RateProvider rateProvider) {
         this.source = source;
         this.twoLevelProductService = twoLevelProductService;
         this.broadcastInvalidationProductService = broadcastInvalidationProductService;
         this.labCaches = labCaches;
         this.redisTemplate = redisTemplate;
         this.cacheWritePause = cacheWritePause;
+        this.rateProvider = rateProvider;
+    }
+
+    public record RateProviderState(int calls, boolean failing) {
+    }
+
+    /* Сценарий 7: сколько раз обращались к поставщику курсов и доступен ли он. */
+    @GetMapping("/rates/provider")
+    public RateProviderState rateProvider() {
+        return new RateProviderState(rateProvider.callCount(), rateProvider.isFailing());
+    }
+
+    @PostMapping("/rates/provider/fail")
+    public void failRateProvider() {
+        rateProvider.setFailing(true);
+    }
+
+    @PostMapping("/rates/provider/recover")
+    public void recoverRateProvider() {
+        rateProvider.setFailing(false);
     }
 
     @GetMapping("/stats")
@@ -74,6 +97,7 @@ public class LabController {
     @PostMapping("/reset")
     public Mono<Void> reset() {
         source.reset();
+        rateProvider.reset();
         labCaches.forEach(LabCache::invalidateAll);
         return redisTemplate.execute(connection -> connection.serverCommands().flushDb()).then();
     }

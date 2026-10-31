@@ -24,6 +24,7 @@ Spring Boot сам поднимет PostgreSQL и Redis из `compose.yaml`. З�
 
 - `catalog` — таблица `product`, `ProductRepository` на `DatabaseClient` и `ProductSource`: чтение товара с задержкой, счётчиком обращений и умением падать.
 - `scenario` — по сервису на приём.
+- `rates` — курсы валют (сценарий 7): поставщик, сервис с `refreshAfterWrite`, прогрев при старте.
 - `config` — настройка кэшей Redis (`CacheConfiguration`, `JitteredTtlCacheConfiguration`) и двухуровневого кэша (`TwoLevelCacheConfiguration`).
 - `web` — `GET /products/{id}?via=…` выбирает сервис сценария, `/lab` — служебные ручки.
 
@@ -70,3 +71,9 @@ Spring Boot сам поднимет PostgreSQL и Redis из `compose.yaml`. З�
 Тест: `Scenario6StampedeTest`. Сервисы: `SyncCacheableProductService`, `StampedeLeaseProductService`. Подробно: [docs/scenarios/06-stampede.md](docs/scenarios/06-stampede.md), вручную: `http/06-stampede.http` и `curl` из описания.
 
 `@Cacheable(sync = true)` с Caffeine объединяет одновременные промахи, а с Redis в реактивном коде — нет: `RedisCache.retrieve` при промахе сразу вызывает загрузчик, и 50 одновременных промахов дают 50 загрузок. Одна загрузка на все реплики — аренда с ожиданием, как в memcache у Facebook: кто взял аренду, перепроверяет значение, загружает и пишет; остальные каждые 20 мс снова смотрят в Redis. Три реплики по 50 одновременных чтений — одна загрузка.
+
+### 7. Курсы валют: обновление по расписанию и допустимое устаревание
+
+Тест: `Scenario7ExchangeRatesTest`. Сервис: `ExchangeRateService`, прогрев — `ExchangeRateWarmUp`, поставщик — `RateProvider`. Подробно: [docs/scenarios/07-exchange-rates.md](docs/scenarios/07-exchange-rates.md), вручную: `http/07-exchange-rates.http` на двух репликах.
+
+Курсы прогреваются при старте в `ApplicationRunner` — Spring Boot объявит реплику готовой только после него. Caffeine с `refreshAfterWrite` обновляет курс в фоне, отдавая прежний. Каждый полученный курс хранится в Redis как последний известный: реплика с пустым кэшем берёт его оттуда, если поставщик недоступен; неудачное обновление оставляет прежний курс, но берёт из Redis более новый, если его получила другая реплика. Курс старше суток не отдаётся — 503.
