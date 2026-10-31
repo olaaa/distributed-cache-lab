@@ -5,6 +5,7 @@ import java.time.Duration;
 import io.github.olaaa.distributedcachelab.catalog.Product;
 import io.github.olaaa.distributedcachelab.scenario.DeleteAfterCommitProductService;
 import io.github.olaaa.distributedcachelab.scenario.RedisCacheableProductService;
+import io.github.olaaa.distributedcachelab.scenario.SyncCacheableProductService;
 import org.springframework.boot.cache.autoconfigure.RedisCacheManagerBuilderCustomizer;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
@@ -20,7 +21,7 @@ public class CacheConfiguration {
     public static final Duration PRODUCTS_TTL = Duration.ofMinutes(10);
 
     /*
-     * Настройка кэша products (сценарий 1), её же получает кэш сценария 5. Остальные кэши получают настройки Spring Boot
+     * Настройка кэша products (сценарий 1), её же получают кэши сценариев 5 и 6. Остальные кэши получают настройки Spring Boot
      * по умолчанию: JDK-сериализация, вечный срок жизни, null кэшируется.
      *
      * - JacksonJsonRedisSerializer с конкретным типом Product: значение в Redis — читаемый JSON
@@ -37,12 +38,13 @@ public class CacheConfiguration {
 
     /*
      * Spring Boot сам создаёт RedisCacheManager; customizer добавляет к нему настройку кэша products
-     * и ту же настройку для кэша сценария 5.
+     * и ту же настройку для кэшей сценариев 5 и 6.
      */
     @Bean
     RedisCacheManagerBuilderCustomizer productsCacheCustomizer() {
         return builder -> builder
                 .withCacheConfiguration(RedisCacheableProductService.CACHE_NAME, productsCacheConfiguration())
-                .withCacheConfiguration(DeleteAfterCommitProductService.CACHE_NAME, productsCacheConfiguration());
+                .withCacheConfiguration(DeleteAfterCommitProductService.CACHE_NAME, productsCacheConfiguration())
+                .withCacheConfiguration(SyncCacheableProductService.CACHE_NAME, productsCacheConfiguration());
     }
 }

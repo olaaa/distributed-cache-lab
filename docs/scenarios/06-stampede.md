@@ -1,0 +1,141 @@
+# Сценарий 6. Лавина промахов и `@Cacheable(sync = true)` с Redis
+
+Тест: `src/test/java/io/github/olaaa/distributedcachelab/scenario/Scenario6StampedeTest.java`.
+Сервисы: `SyncCacheableProductService` (кэш `productsSync`, `@Cacheable(sync = true)`) и `StampedeLeaseProductService` (ключи `productsStampede::`, аренда `productsStampede:lease::`, `WAIT_STEP` = 20 мс, `MAX_WAIT` = 5 секунд, `LEASE_TTL` = 10 секунд).
+Ручная проверка: `http/06-stampede.http` и команды `curl` ниже.
+
+Лавина промахов (cache stampede, thundering herd — «топот стада») — много одновременных запросов к ключу, которого нет в кэше: все промахиваются, и все идут в базу за одним и тем же значением.
+
+## Ситуация
+
+Горячий товар на распродаже, тысячи запросов в секунду. Его запись в Redis истекла, или Redis очистили, или менеджер только что изменил цену и ключ удалён (сценарий 5). Пока первый промах загружает товар и записывает его в Redis, все следующие запросы тоже промахиваются и тоже идут в базу. При загрузке 50 мс и тысяче запросов в секунду это около пятидесяти загрузок одного товара — и так на каждой реплике (оценка, не замер).
+
+В caching-lab, сценарий 9, `@Cacheable(sync = true)` с Caffeine такую лавину гасил: 50 одновременных промахов — одна загрузка. Вопрос этого сценария — так ли с Redis.
+
+## `sync = true` с Redis
+
+Документация Spring обещает: «you can use the sync attribute to instruct the underlying cache provider to lock the cache entry while the value is being computed». И про реактивные методы: «Such CompletableFuture and reactive adaptation also works for synchronized caching, computing the value only once in case of a concurrent cache miss». Но рядом оговорка: «This is an optional feature, and your favorite cache library may not support it».
+
+Объединяет промахи не Spring, а реализация `Cache`. Для `Mono` Spring вызывает `Cache.retrieve(key, valueLoader)`. У Caffeine это `AsyncCache.get`: он кладёт в карту future загрузки, и остальные промахи ждут ту же future. У Redis — `RedisCache.retrieve` из Spring Data Redis 4.1.2:
+
+```java
+public <T> CompletableFuture<T> retrieve(Object key, Supplier<CompletableFuture<T>> valueLoader) {
+    return retrieve(key).thenCompose(wrapper -> {
+        if (wrapper != null) {
+            return CompletableFuture.completedFuture((T) wrapper.get());
+        }
+        return valueLoader.get().thenCompose(value -> {
+            ...
+            return getCacheWriter().store(getName(), binaryKey, binaryValue, timeToLive).thenApply(v -> value);
+        });
+    });
+}
+```
+
+`GET` из Redis, при промахе — сразу загрузчик, потом `SET`. Ни блокировки, ни карты загрузок. Пятьдесят одновременных промахов — пятьдесят загрузок.
+
+В Spring Data Redis есть и `RedisCacheWriter.lockingRedisCacheWriter`. По исходнику он объединяет промахи только в обычном, не реактивном `get(key, valueLoader)`: берёт в Redis блокировку `productsSync~lock` на весь кэш — на все ключи сразу — и держит её на время загрузки. Реактивный путь (`AsynchronousCacheWriterDelegate`) блокирует только запись `store`, а загрузчик вызывает вне блокировки. Для `Mono` он лавину не гасит. Это вывод по исходнику, в лаборатории не проверялся.
+
+## Одна загрузка на все реплики: аренда с ожиданием
+
+Защита — аренда из сценария 5, но чтение, которому аренда не досталась, не идёт в базу само, а ждёт. Так делает Facebook. Описание проблемы: «A thundering herd happens when a specific key undergoes heavy read and write activity». Решение: «A slight modification to leases also mitigates thundering herds». Сервер выдаёт аренду на ключ не чаще раза в 10 секунд, остальные клиенты получают «a special notification telling the client to wait a short amount of time». И дальше: «Typically, the client with the lease will have successfully set the data within a few milliseconds. Thus, when waiting clients retry the request, the data is often present in cache».
+
+Эффект, который Facebook замерил за неделю на ключах, склонных к такой лавине: «Without leases, all of the cache misses resulted in a peak database query rate of 17K/s», «With leases, the peak database query rate was 1.3K/s».
+
+`StampedeLeaseProductService`:
+
+1. `GET` значения. Есть — ответ.
+2. Нет — взять аренду: `SET productsStampede:lease::1 <маркер> NX` со сроком 10 секунд.
+3. Не взяло — аренду держит другое чтение, на этой реплике или на другой. Подождать `WAIT_STEP` = 20 мс и вернуться к шагу 1.
+4. Взяло — ещё раз `GET` значения. Есть — снять свою аренду и ответить.
+5. Нет — загрузить из базы и записать в Redis скриптом сценария 5: только если аренда своя. Скрипт заодно снимает аренду.
+
+```java
+private Mono<Product> leaseOrWait(long id, long waitDeadline) {
+    String token = UUID.randomUUID().toString();
+    return strings.opsForValue().setIfAbsent(LEASE_KEY_PREFIX + id, token, LEASE_TTL)
+            .flatMap(leased -> {
+                if (leased) {
+                    return recheckOrLoad(id, token);
+                }
+                if (System.nanoTime() >= waitDeadline) {
+                    fallbackLoads.incrementAndGet();
+                    return source.load(id);
+                }
+                waitSteps.incrementAndGet();
+                return Mono.delay(WAIT_STEP).then(Mono.defer(() -> readOrLoad(id, waitDeadline)));
+            });
+}
+```
+
+Ожидание — `Mono.delay`, без `sleep`: поток не занят, пока чтение ждёт.
+
+**Перепроверка после аренды — шаг 4.** Без неё тест на трёх репликах поймал две загрузки вместо одной. Чтение промахнулось на шаге 1; в это время держатель аренды загрузил товар, записал его и снял аренду; чтение взяло освободившуюся аренду и загрузило товар второй раз. Это та же ошибка, что «проверить — заблокировать» без повторной проверки в double-checked locking: после захвата блокировки состояние надо проверить заново.
+
+**Если держатель аренды не дописал значение.** Загрузка упала или товара нет — аренда снимается сразу, отдельным скриптом и только своя. Иначе ждущие простояли бы до её истечения. Если держатель завис или реплика упала, аренда истечёт сама через `LEASE_TTL`, и её возьмёт одно из ждущих чтений. А чтение, которое прождало `MAX_WAIT` = 5 секунд, загружает товар само, без записи в Redis: покупатель не должен ждать дольше.
+
+**Цена.** Каждое ждущее чтение раз в 20 мс заглядывает в Redis: при загрузке 100 мс это около пяти `GET` и пяти `SET NX` на чтение. Ожидающих можно сократить до одного на реплику, если сначала объединить промахи локально, как `AsyncCache` в сценарии 3, а опрос заменить уведомлением через Pub/Sub. Это выводы, в лаборатории не проверялись.
+
+## Другие способы
+
+Кратко, в лаборатории не проверялись:
+
+- **Обновлять заранее**, пока значение не истекло (refresh-ahead, сценарий 7 caching-lab): горячий ключ не истекает вовсе, промаха нет. Не помогает после удаления ключа при изменении.
+- **Вероятностное досрочное обновление** — каждое чтение с небольшой вероятностью, растущей к концу срока, обновляет значение заранее. Статья «Optimal Probabilistic Cache Stampede Prevention»: «to let the processes that perform such requests to randomly ask for a regeneration before the expiration time of the item».
+- **Разброс срока жизни** (сценарий 2) — от другой беды: одновременного истечения многих разных ключей. От лавины на одном ключе он не спасает.
+
+## Что проверяют тесты
+
+`syncCacheableWithRedisLetsEveryConcurrentMissThrough`: 50 одновременных чтений через `@Cacheable(sync = true)` с Redis — 50 обращений к источнику. Предположение из сценария 1 подтвердилось.
+
+`leaseWithWaitingLoadsOnceForConcurrentMissesOnSeveralReplicas`: три реплики — бин и два отдельных экземпляра сервиса с тем же Redis, — на каждой 50 одновременных чтений. Все 150 получили товар, обращение к источнику одно, ни одно чтение не упёрлось в `MAX_WAIT`, аренда после записи снята.
+
+`waitersLoadOnceAfterOrphanedLeaseExpires`: аренду держит «упавшая реплика» — тест сам записывает ключ аренды со сроком 500 мс и без значения. 50 одновременных чтений ждут, пока она истечёт: на всё ушло не меньше 500 мс. Потом аренду берёт одно чтение, обращение к источнику одно.
+
+`failedLoadReleasesLeaseAtOnce`: источник «упал» — чтение получает `SourceUnavailableException`, аренды в Redis сразу после этого нет.
+
+Тест сценария прогнан пять раз подряд, весь набор лаборатории, 22 теста, — три раза, без падений.
+
+## Попробовать вручную
+
+Запустить приложение: `mvn spring-boot:run`. Пятьдесят одновременных запросов удобнее отправить из терминала:
+
+```bash
+curl -s -X POST localhost:8080/lab/reset
+seq 50 | xargs -P 50 -I{} curl -s -o /dev/null 'localhost:8080/products/1?via=REDIS_SYNC'
+curl -s localhost:8080/lab/stats
+
+curl -s -X POST localhost:8080/lab/reset
+seq 50 | xargs -P 50 -I{} curl -s -o /dev/null 'localhost:8080/products/1?via=STAMPEDE_LEASE'
+curl -s localhost:8080/lab/stats
+```
+
+В `http/06-stampede.http` — сброс, одиночные чтения и счётчик для IntelliJ HTTP Client: одновременных запросов он не отправляет.
+
+Результат трёх прогонов, `sourceCalls` из `/lab/stats`:
+
+| Прогон | `REDIS_SYNC` | `STAMPEDE_LEASE` |
+|---|---|---|
+| 1 | 50 | 1 |
+| 2 | 30 | 1 |
+| 3 | 47 | 1 |
+
+Вручную загрузок с `sync = true` бывает меньше пятидесяти: `xargs` запускает `curl` не мгновенно, и часть запросов приходит, когда товар уже в Redis — загрузка в приложении длится 50 мс. Тест отправляет все чтения разом и видит ровно 50.
+
+## Что важно заметить
+
+- `sync = true` — подсказка реализации кэша, а не гарантия Spring. С Caffeine промахи объединяются, с `RedisCache` в реактивном коде — нет.
+- Даже объединение внутри одной реплики не спасает кластер: десять реплик — десять загрузок. Одна загрузка на всех — только через общий Redis: аренду.
+- Захватил аренду — перепроверь значение: его мог записать предыдущий держатель.
+- Аренду, которую не удалось использовать, снимать сразу; у ожидания — предел, после которого чтение грузит само.
+
+## Как сказать на собеседовании
+
+«Горячий ключ истёк — и все одновременные запросы промахиваются и идут в базу. `@Cacheable(sync = true)` с Caffeine это гасит, а с Redis в реактивном коде — нет: `RedisCache.retrieve` при промахе сразу вызывает загрузчик, без блокировки, и это легко проверить тестом. Да и локальная синхронизация не спасает кластер. Поэтому делаю аренду, как в memcache у Facebook: при промахе — `SET NX` на ключ аренды; кто взял — перепроверяет значение, грузит и пишет; остальные ждут несколько миллисекунд и снова читают Redis. С ограничением ожидания и снятием аренды при ошибке. У Facebook это снизило пиковую нагрузку на базу с 17 тысяч до 1,3 тысячи запросов в секунду. Для самых горячих ключей добавляю обновление заранее, чтобы они не истекали вовсе».
+
+## Источники
+
+- Spring Framework — [Declarative Annotation-based Caching](https://docs.spring.io/spring-framework/reference/integration/cache/annotations.html): разделы «Synchronized Caching» и «Caching with CompletableFuture and Reactive Return Types».
+- Spring Data Redis 4.1.2, исходники: `RedisCache.retrieve(Object, Supplier)`, `DefaultRedisCacheWriter.get(String, byte[], Supplier, Duration, boolean)`, `DefaultRedisCacheWriter.AsynchronousCacheWriterDelegate`.
+- Rajesh Nishtala и др. — [Scaling Memcache at Facebook](https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf), NSDI 2013, раздел 3.2.1.
+- Andrea Vattani, Flavio Chierichetti, Keegan Lowenstein — [Optimal Probabilistic Cache Stampede Prevention](https://www.vldb.org/pvldb/vol8/p886-vattani.pdf), VLDB 2015.

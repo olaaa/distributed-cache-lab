@@ -1,0 +1,16 @@
+### Сценарий 6. Лавина промахов и @Cacheable(sync = true) с Redis. Подробно: docs/scenarios/06-stampede.md
+### Одновременных запросов IntelliJ HTTP Client не отправляет. 50 одновременных — из терминала:
+### seq 50 | xargs -P 50 -I{} curl -s -o /dev/null 'localhost:8080/products/1?via=REDIS_SYNC'
+### seq 50 | xargs -P 50 -I{} curl -s -o /dev/null 'localhost:8080/products/1?via=STAMPEDE_LEASE'
+
+### 1. Сброс
+POST http://localhost:8080/lab/reset
+
+### 2. Чтение через @Cacheable(sync = true) — кэш productsSync в Redis
+GET http://localhost:8080/products/1?via=REDIS_SYNC
+
+### 3. Чтение с арендой и ожиданием — ключ productsStampede::1
+GET http://localhost:8080/products/1?via=STAMPEDE_LEASE
+
+### 4. sourceCalls: после 50 одновременных REDIS_SYNC — десятки, после 50 одновременных STAMPEDE_LEASE — 1
+GET http://localhost:8080/lab/stats

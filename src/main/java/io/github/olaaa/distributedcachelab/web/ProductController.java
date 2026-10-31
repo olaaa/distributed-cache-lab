@@ -9,6 +9,8 @@ import io.github.olaaa.distributedcachelab.scenario.DeleteAfterCommitProductServ
 import io.github.olaaa.distributedcachelab.scenario.JitteredTtlProductService;
 import io.github.olaaa.distributedcachelab.scenario.LeaseProductService;
 import io.github.olaaa.distributedcachelab.scenario.RedisCacheableProductService;
+import io.github.olaaa.distributedcachelab.scenario.StampedeLeaseProductService;
+import io.github.olaaa.distributedcachelab.scenario.SyncCacheableProductService;
 import io.github.olaaa.distributedcachelab.scenario.TwoLevelProductService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,7 +27,8 @@ import reactor.core.publisher.Mono;
 public class ProductController {
 
     public enum ReadVia {
-        REDIS, REDIS_DEFAULT_CONFIG, REDIS_JITTERED_TTL, TWO_LEVEL, BROADCAST, DELETE_AFTER_COMMIT, LEASE
+        REDIS, REDIS_DEFAULT_CONFIG, REDIS_JITTERED_TTL, TWO_LEVEL, BROADCAST, DELETE_AFTER_COMMIT, LEASE,
+        REDIS_SYNC, STAMPEDE_LEASE
     }
 
     public enum ChangeVia {
@@ -42,6 +45,8 @@ public class ProductController {
     private final BroadcastInvalidationProductService broadcastInvalidationProductService;
     private final DeleteAfterCommitProductService deleteAfterCommitProductService;
     private final LeaseProductService leaseProductService;
+    private final SyncCacheableProductService syncCacheableProductService;
+    private final StampedeLeaseProductService stampedeLeaseProductService;
 
     public ProductController(RedisCacheableProductService redisCacheableProductService,
                              DefaultConfigProductService defaultConfigProductService,
@@ -49,7 +54,9 @@ public class ProductController {
                              TwoLevelProductService twoLevelProductService,
                              BroadcastInvalidationProductService broadcastInvalidationProductService,
                              DeleteAfterCommitProductService deleteAfterCommitProductService,
-                             LeaseProductService leaseProductService) {
+                             LeaseProductService leaseProductService,
+                             SyncCacheableProductService syncCacheableProductService,
+                             StampedeLeaseProductService stampedeLeaseProductService) {
         this.redisCacheableProductService = redisCacheableProductService;
         this.defaultConfigProductService = defaultConfigProductService;
         this.jitteredTtlProductService = jitteredTtlProductService;
@@ -57,6 +64,8 @@ public class ProductController {
         this.broadcastInvalidationProductService = broadcastInvalidationProductService;
         this.deleteAfterCommitProductService = deleteAfterCommitProductService;
         this.leaseProductService = leaseProductService;
+        this.syncCacheableProductService = syncCacheableProductService;
+        this.stampedeLeaseProductService = stampedeLeaseProductService;
     }
 
     @GetMapping("/{id}")
@@ -70,6 +79,8 @@ public class ProductController {
             case BROADCAST -> broadcastInvalidationProductService.findById(id);
             case DELETE_AFTER_COMMIT -> deleteAfterCommitProductService.findById(id);
             case LEASE -> leaseProductService.findById(id);
+            case REDIS_SYNC -> syncCacheableProductService.findById(id);
+            case STAMPEDE_LEASE -> stampedeLeaseProductService.findById(id);
         };
         return product.map(ResponseEntity::ok).defaultIfEmpty(ResponseEntity.notFound().build());
     }

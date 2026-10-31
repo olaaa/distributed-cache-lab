@@ -39,8 +39,9 @@ public class LeaseProductService implements LabCache {
     /*
      * KEYS[1] — ключ товара, KEYS[2] — ключ аренды; ARGV[1] — маркер аренды, ARGV[2] — товар в JSON,
      * ARGV[3] — срок жизни значения в миллисекундах. Записывает, только если аренда — своя.
+     * Тот же скрипт использует сценарий 6.
      */
-    private static final RedisScript<Long> WRITE_IF_LEASE_HELD = RedisScript.of("""
+    static final RedisScript<Long> WRITE_IF_LEASE_HELD = RedisScript.of("""
             if redis.call('GET', KEYS[2]) == ARGV[1] then
                 redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
                 redis.call('DEL', KEYS[2])
