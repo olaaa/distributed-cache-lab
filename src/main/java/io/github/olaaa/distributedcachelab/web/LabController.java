@@ -1,6 +1,10 @@
 package io.github.olaaa.distributedcachelab.web;
 
+import java.util.List;
+
 import io.github.olaaa.distributedcachelab.catalog.ProductSource;
+import io.github.olaaa.distributedcachelab.scenario.LabCache;
+import io.github.olaaa.distributedcachelab.scenario.TwoLevelProductService;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -8,25 +12,32 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
-/* Служебные ручки для ручных экспериментов: сколько раз дошли до источника, сброс источника и Redis. */
+/* Служебные ручки для ручных экспериментов: сколько раз дошли до источника и до Redis, сброс. */
 @RestController
 @RequestMapping("/lab")
 public class LabController {
 
-    public record LabStats(int sourceCalls) {
+    public record LabStats(int sourceCalls, int twoLevelRedisReads) {
     }
 
     private final ProductSource source;
+    private final TwoLevelProductService twoLevelProductService;
+    private final List<LabCache> labCaches;
     private final ReactiveStringRedisTemplate redisTemplate;
 
-    public LabController(ProductSource source, ReactiveStringRedisTemplate redisTemplate) {
+    public LabController(ProductSource source,
+                         TwoLevelProductService twoLevelProductService,
+                         List<LabCache> labCaches,
+                         ReactiveStringRedisTemplate redisTemplate) {
         this.source = source;
+        this.twoLevelProductService = twoLevelProductService;
+        this.labCaches = labCaches;
         this.redisTemplate = redisTemplate;
     }
 
     @GetMapping("/stats")
     public LabStats stats() {
-        return new LabStats(source.callCount());
+        return new LabStats(source.callCount(), twoLevelProductService.redisReadCount());
     }
 
     @PostMapping("/source/fail")
@@ -39,10 +50,14 @@ public class LabController {
         source.setFailing(false);
     }
 
-    /* Сбрасывает счётчик источника и очищает текущую базу Redis целиком: все кэши лаборатории живут в ней. */
+    /*
+     * Сбрасывает счётчик источника, локальные кэши и очищает текущую базу Redis целиком:
+     * все кэши лаборатории живут в ней.
+     */
     @PostMapping("/reset")
     public Mono<Void> reset() {
         source.reset();
+        labCaches.forEach(LabCache::invalidateAll);
         return redisTemplate.execute(connection -> connection.serverCommands().flushDb()).then();
     }
 }

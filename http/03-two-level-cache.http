@@ -1,0 +1,13 @@
+### Сценарий 3. Двухуровневый кэш: Caffeine плюс Redis. Подробно: docs/scenarios/03-two-level-cache.md
+### Устаревание первого уровня: после шага 3 записать другую цену в обход приложения
+### docker compose exec redis redis-cli SET productsTwoLevel::1 '{"id":1,"name":"Чайник","price":1990.00}' EX 600
+### — шаг 2 сразу вернёт старую цену из Caffeine, через 30 секунд после первого чтения — новую из Redis.
+
+### 1. Сбросить счётчики, локальные кэши и очистить Redis
+POST http://localhost:8080/lab/reset
+
+### 2. Товар через двухуровневый кэш. Выполните несколько раз
+GET http://localhost:8080/products/1?via=TWO_LEVEL
+
+### 3. sourceCalls = 1, twoLevelRedisReads = 1: повторные чтения отдаёт Caffeine
+GET http://localhost:8080/lab/stats

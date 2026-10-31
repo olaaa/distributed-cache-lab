@@ -24,7 +24,7 @@ Spring Boot сам поднимет PostgreSQL и Redis из `compose.yaml`. З�
 
 - `catalog` — таблица `product`, `ProductRepository` на `DatabaseClient` и `ProductSource`: чтение товара с задержкой, счётчиком обращений и умением падать.
 - `scenario` — по сервису на приём.
-- `config/CacheConfiguration` — настройка кэшей Redis.
+- `config` — настройка кэшей Redis (`CacheConfiguration`, `JitteredTtlCacheConfiguration`) и двухуровневого кэша (`TwoLevelCacheConfiguration`).
 - `web` — `GET /products/{id}?via=…` выбирает сервис сценария, `/lab` — служебные ручки.
 
 Клиент Redis — Lettuce, его приносит `spring-boot-starter-data-redis-reactive`. Реактивный `@Cacheable` на `Mono` с `RedisCache` работает только с реактивной фабрикой соединений, а её даёт Lettuce.
@@ -47,9 +47,14 @@ Spring Boot сам поднимет PostgreSQL и Redis из `compose.yaml`. З�
 
 Сто товаров загружаются в кэш одновременно (прогрев). С фиксированным сроком все сто ключей истекают в пределах нескольких десятков миллисекунд — и база получит их разом. Срок с разбросом (`TtlFunction`: 10 минут плюс случайная добавка до 2 минут) растягивает истечение на две минуты, по четыре-пять ключей в секунду.
 
+### 3. Двухуровневый кэш: Caffeine плюс Redis
+
+Тест: `Scenario3TwoLevelCacheTest`. Сервис: `TwoLevelProductService`. Подробно: [docs/scenarios/03-two-level-cache.md](docs/scenarios/03-two-level-cache.md), вручную: `http/03-two-level-cache.http`.
+
+Перед Redis — локальный Caffeine в каждой реплике: повторные чтения идут из памяти, без сети. В замере — 1–4 мкс на чтение против 450–660 мкс через Redis. Вторая реплика берёт значение из Redis, а не из базы. Цена — копии реплик расходятся: об изменении в Redis реплика узнаёт, только когда истечёт её локальная копия (`LOCAL_TTL` = 30 секунд).
+
 ## Дальше
 
-- Двухуровневый кэш: Caffeine плюс Redis.
 - Инвалидация локальных кэшей между репликами.
 - Удаление после коммита и гонка, от которой в Redis нет встроенной защиты.
 - Лавина промахов и `@Cacheable(sync = true)` с Redis.

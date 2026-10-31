@@ -4,6 +4,7 @@ import io.github.olaaa.distributedcachelab.catalog.Product;
 import io.github.olaaa.distributedcachelab.scenario.DefaultConfigProductService;
 import io.github.olaaa.distributedcachelab.scenario.JitteredTtlProductService;
 import io.github.olaaa.distributedcachelab.scenario.RedisCacheableProductService;
+import io.github.olaaa.distributedcachelab.scenario.TwoLevelProductService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -17,19 +18,22 @@ import reactor.core.publisher.Mono;
 public class ProductController {
 
     public enum ReadVia {
-        REDIS, REDIS_DEFAULT_CONFIG, REDIS_JITTERED_TTL
+        REDIS, REDIS_DEFAULT_CONFIG, REDIS_JITTERED_TTL, TWO_LEVEL
     }
 
     private final RedisCacheableProductService redisCacheableProductService;
     private final DefaultConfigProductService defaultConfigProductService;
     private final JitteredTtlProductService jitteredTtlProductService;
+    private final TwoLevelProductService twoLevelProductService;
 
     public ProductController(RedisCacheableProductService redisCacheableProductService,
                              DefaultConfigProductService defaultConfigProductService,
-                             JitteredTtlProductService jitteredTtlProductService) {
+                             JitteredTtlProductService jitteredTtlProductService,
+                             TwoLevelProductService twoLevelProductService) {
         this.redisCacheableProductService = redisCacheableProductService;
         this.defaultConfigProductService = defaultConfigProductService;
         this.jitteredTtlProductService = jitteredTtlProductService;
+        this.twoLevelProductService = twoLevelProductService;
     }
 
     @GetMapping("/{id}")
@@ -39,6 +43,7 @@ public class ProductController {
             case REDIS -> redisCacheableProductService.findById(id);
             case REDIS_DEFAULT_CONFIG -> defaultConfigProductService.findById(id);
             case REDIS_JITTERED_TTL -> jitteredTtlProductService.findById(id);
+            case TWO_LEVEL -> twoLevelProductService.findById(id);
         };
         return product.map(ResponseEntity::ok).defaultIfEmpty(ResponseEntity.notFound().build());
     }
