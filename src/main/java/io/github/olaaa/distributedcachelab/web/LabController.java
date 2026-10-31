@@ -3,6 +3,7 @@ package io.github.olaaa.distributedcachelab.web;
 import java.util.List;
 
 import io.github.olaaa.distributedcachelab.catalog.ProductSource;
+import io.github.olaaa.distributedcachelab.scenario.BroadcastInvalidationProductService;
 import io.github.olaaa.distributedcachelab.scenario.LabCache;
 import io.github.olaaa.distributedcachelab.scenario.TwoLevelProductService;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
@@ -17,27 +18,31 @@ import reactor.core.publisher.Mono;
 @RequestMapping("/lab")
 public class LabController {
 
-    public record LabStats(int sourceCalls, int twoLevelRedisReads) {
+    public record LabStats(int sourceCalls, int twoLevelRedisReads, int broadcastInvalidationsReceived) {
     }
 
     private final ProductSource source;
     private final TwoLevelProductService twoLevelProductService;
+    private final BroadcastInvalidationProductService broadcastInvalidationProductService;
     private final List<LabCache> labCaches;
     private final ReactiveStringRedisTemplate redisTemplate;
 
     public LabController(ProductSource source,
                          TwoLevelProductService twoLevelProductService,
+                         BroadcastInvalidationProductService broadcastInvalidationProductService,
                          List<LabCache> labCaches,
                          ReactiveStringRedisTemplate redisTemplate) {
         this.source = source;
         this.twoLevelProductService = twoLevelProductService;
+        this.broadcastInvalidationProductService = broadcastInvalidationProductService;
         this.labCaches = labCaches;
         this.redisTemplate = redisTemplate;
     }
 
     @GetMapping("/stats")
     public LabStats stats() {
-        return new LabStats(source.callCount(), twoLevelProductService.redisReadCount());
+        return new LabStats(source.callCount(), twoLevelProductService.redisReadCount(),
+                broadcastInvalidationProductService.invalidationsReceived());
     }
 
     @PostMapping("/source/fail")

@@ -1,0 +1,33 @@
+### Сценарий 4. Инвалидация локальных кэшей между репликами. Подробно: docs/scenarios/04-broadcast-invalidation.md
+### Нужны две реплики: mvn spring-boot:run и во втором терминале
+### mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=8081
+
+### 1. Сброс на реплике 8080 (Redis общий — он очистится для обеих)
+POST http://localhost:8080/lab/reset
+
+### 2. Сброс локальных кэшей и счётчиков на реплике 8081
+POST http://localhost:8081/lab/reset
+
+### 3. Товар на реплике 8080 — ляжет в её Caffeine и в Redis
+GET http://localhost:8080/products/1?via=BROADCAST
+
+### 4. Товар на реплике 8081 — возьмёт из Redis и положит в свой Caffeine
+GET http://localhost:8081/products/1?via=BROADCAST
+
+### 5. Изменить цену на реплике 8080. В ответе notifiedReplicas = 2
+PUT http://localhost:8080/products/1/price
+Content-Type: application/json
+
+{"price": 1990.00}
+
+### 6. Реплика 8081 сразу отдаёт новую цену
+GET http://localhost:8081/products/1?via=BROADCAST
+
+### 7. broadcastInvalidationsReceived = 1 на реплике 8081
+GET http://localhost:8081/lab/stats
+
+### 8. Вернуть цену
+PUT http://localhost:8080/products/1/price
+Content-Type: application/json
+
+{"price": 2490.00}
