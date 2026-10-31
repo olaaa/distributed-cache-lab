@@ -4,9 +4,10 @@ import java.math.BigDecimal;
 
 import io.github.olaaa.distributedcachelab.catalog.Product;
 import io.github.olaaa.distributedcachelab.scenario.BroadcastInvalidationProductService;
-import io.github.olaaa.distributedcachelab.scenario.BroadcastInvalidationProductService.PriceChangeResult;
 import io.github.olaaa.distributedcachelab.scenario.DefaultConfigProductService;
+import io.github.olaaa.distributedcachelab.scenario.DeleteAfterCommitProductService;
 import io.github.olaaa.distributedcachelab.scenario.JitteredTtlProductService;
+import io.github.olaaa.distributedcachelab.scenario.LeaseProductService;
 import io.github.olaaa.distributedcachelab.scenario.RedisCacheableProductService;
 import io.github.olaaa.distributedcachelab.scenario.TwoLevelProductService;
 import org.springframework.http.ResponseEntity;
@@ -24,7 +25,11 @@ import reactor.core.publisher.Mono;
 public class ProductController {
 
     public enum ReadVia {
-        REDIS, REDIS_DEFAULT_CONFIG, REDIS_JITTERED_TTL, TWO_LEVEL, BROADCAST
+        REDIS, REDIS_DEFAULT_CONFIG, REDIS_JITTERED_TTL, TWO_LEVEL, BROADCAST, DELETE_AFTER_COMMIT, LEASE
+    }
+
+    public enum ChangeVia {
+        BROADCAST, DELETE_AFTER_COMMIT, LEASE
     }
 
     public record PriceChange(BigDecimal price) {
@@ -35,17 +40,23 @@ public class ProductController {
     private final JitteredTtlProductService jitteredTtlProductService;
     private final TwoLevelProductService twoLevelProductService;
     private final BroadcastInvalidationProductService broadcastInvalidationProductService;
+    private final DeleteAfterCommitProductService deleteAfterCommitProductService;
+    private final LeaseProductService leaseProductService;
 
     public ProductController(RedisCacheableProductService redisCacheableProductService,
                              DefaultConfigProductService defaultConfigProductService,
                              JitteredTtlProductService jitteredTtlProductService,
                              TwoLevelProductService twoLevelProductService,
-                             BroadcastInvalidationProductService broadcastInvalidationProductService) {
+                             BroadcastInvalidationProductService broadcastInvalidationProductService,
+                             DeleteAfterCommitProductService deleteAfterCommitProductService,
+                             LeaseProductService leaseProductService) {
         this.redisCacheableProductService = redisCacheableProductService;
         this.defaultConfigProductService = defaultConfigProductService;
         this.jitteredTtlProductService = jitteredTtlProductService;
         this.twoLevelProductService = twoLevelProductService;
         this.broadcastInvalidationProductService = broadcastInvalidationProductService;
+        this.deleteAfterCommitProductService = deleteAfterCommitProductService;
+        this.leaseProductService = leaseProductService;
     }
 
     @GetMapping("/{id}")
@@ -57,14 +68,30 @@ public class ProductController {
             case REDIS_JITTERED_TTL -> jitteredTtlProductService.findById(id);
             case TWO_LEVEL -> twoLevelProductService.findById(id);
             case BROADCAST -> broadcastInvalidationProductService.findById(id);
+            case DELETE_AFTER_COMMIT -> deleteAfterCommitProductService.findById(id);
+            case LEASE -> leaseProductService.findById(id);
         };
         return product.map(ResponseEntity::ok).defaultIfEmpty(ResponseEntity.notFound().build());
     }
 
-    /* Сценарий 4: изменить цену и разослать инвалидацию остальным репликам. */
+    /*
+     * Изменить цену. BROADCAST — сценарий 4: удалить из Redis и разослать инвалидацию остальным репликам.
+     * DELETE_AFTER_COMMIT и LEASE — сценарий 5: удалить из Redis после коммита, без аренды и с ней.
+     */
     @PutMapping("/{id}/price")
-    public Mono<ResponseEntity<PriceChangeResult>> changePrice(@PathVariable long id, @RequestBody PriceChange change) {
-        return broadcastInvalidationProductService.changePrice(id, change.price())
-                .map(result -> result.updated() ? ResponseEntity.ok(result) : ResponseEntity.notFound().build());
+    public Mono<ResponseEntity<?>> changePrice(@PathVariable long id, @RequestBody PriceChange change,
+                                               @RequestParam(defaultValue = "BROADCAST") ChangeVia via) {
+        return switch (via) {
+            case BROADCAST -> broadcastInvalidationProductService.changePrice(id, change.price())
+                    .map(result -> result.updated() ? ResponseEntity.ok(result) : ResponseEntity.notFound().build());
+            case DELETE_AFTER_COMMIT -> deleteAfterCommitProductService.changePrice(id, change.price())
+                    .map(ProductController::updatedOrNotFound);
+            case LEASE -> leaseProductService.changePrice(id, change.price())
+                    .map(ProductController::updatedOrNotFound);
+        };
+    }
+
+    private static ResponseEntity<?> updatedOrNotFound(boolean updated) {
+        return updated ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
     }
 }

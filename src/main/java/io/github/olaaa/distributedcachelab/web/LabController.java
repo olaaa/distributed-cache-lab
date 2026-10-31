@@ -1,15 +1,18 @@
 package io.github.olaaa.distributedcachelab.web;
 
+import java.time.Duration;
 import java.util.List;
 
 import io.github.olaaa.distributedcachelab.catalog.ProductSource;
 import io.github.olaaa.distributedcachelab.scenario.BroadcastInvalidationProductService;
+import io.github.olaaa.distributedcachelab.scenario.CacheWritePause;
 import io.github.olaaa.distributedcachelab.scenario.LabCache;
 import io.github.olaaa.distributedcachelab.scenario.TwoLevelProductService;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
@@ -26,17 +29,20 @@ public class LabController {
     private final BroadcastInvalidationProductService broadcastInvalidationProductService;
     private final List<LabCache> labCaches;
     private final ReactiveStringRedisTemplate redisTemplate;
+    private final CacheWritePause cacheWritePause;
 
     public LabController(ProductSource source,
                          TwoLevelProductService twoLevelProductService,
                          BroadcastInvalidationProductService broadcastInvalidationProductService,
                          List<LabCache> labCaches,
-                         ReactiveStringRedisTemplate redisTemplate) {
+                         ReactiveStringRedisTemplate redisTemplate,
+                         CacheWritePause cacheWritePause) {
         this.source = source;
         this.twoLevelProductService = twoLevelProductService;
         this.broadcastInvalidationProductService = broadcastInvalidationProductService;
         this.labCaches = labCaches;
         this.redisTemplate = redisTemplate;
+        this.cacheWritePause = cacheWritePause;
     }
 
     @GetMapping("/stats")
@@ -53,6 +59,12 @@ public class LabController {
     @PostMapping("/source/recover")
     public void recoverSource() {
         source.setFailing(false);
+    }
+
+    /* Сценарий 5: пауза между чтением из базы и записью в Redis, чтобы успеть изменить цену. 0 — без паузы. */
+    @PostMapping("/cache-write-pause")
+    public void cacheWritePause(@RequestParam long seconds) {
+        cacheWritePause.set(Duration.ofSeconds(seconds));
     }
 
     /*

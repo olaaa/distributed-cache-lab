@@ -1,0 +1,60 @@
+### Сценарий 5. Удаление после коммита и гонка в Redis. Подробно: docs/scenarios/05-delete-after-commit.md
+### Шаг 3 (медленное чтение) запустить и, пока он ждёт 10 секунд, запустить шаг 4 (изменение цены).
+### Для аренды — те же шаги с via=LEASE (шаги 9–14).
+
+### 1. Сброс
+POST http://localhost:8080/lab/reset
+
+### 2. Пауза 10 секунд между чтением из базы и записью в Redis
+POST http://localhost:8080/lab/cache-write-pause?seconds=10
+
+### 3. Медленное чтение: промах, старая цена из базы, через 10 секунд — запись в Redis
+GET http://localhost:8080/products/1?via=DELETE_AFTER_COMMIT
+
+### 4. Пока шаг 3 ждёт: изменить цену — UPDATE, коммит, удаление ключа из Redis
+PUT http://localhost:8080/products/1/price?via=DELETE_AFTER_COMMIT
+Content-Type: application/json
+
+{"price": 1990.00}
+
+### 5. Убрать паузу
+POST http://localhost:8080/lab/cache-write-pause?seconds=0
+
+### 6. Кэш отдаёт старую цену 2490.00, хотя в базе 1990.00
+GET http://localhost:8080/products/1?via=DELETE_AFTER_COMMIT
+
+### 7. sourceCalls = 1: старая цена взята из Redis
+GET http://localhost:8080/lab/stats
+
+### 8. Вернуть цену
+PUT http://localhost:8080/products/1/price?via=DELETE_AFTER_COMMIT
+Content-Type: application/json
+
+{"price": 2490.00}
+
+### 9. Аренда. Сброс
+POST http://localhost:8080/lab/reset
+
+### 10. Пауза 10 секунд
+POST http://localhost:8080/lab/cache-write-pause?seconds=10
+
+### 11. Медленное чтение с арендой
+GET http://localhost:8080/products/1?via=LEASE
+
+### 12. Пока шаг 11 ждёт: изменить цену — удаляются и значение, и аренда
+PUT http://localhost:8080/products/1/price?via=LEASE
+Content-Type: application/json
+
+{"price": 1990.00}
+
+### 13. Убрать паузу и прочитать: новая цена 1990.00, старая в Redis не попала
+POST http://localhost:8080/lab/cache-write-pause?seconds=0
+
+###
+GET http://localhost:8080/products/1?via=LEASE
+
+### 14. Вернуть цену
+PUT http://localhost:8080/products/1/price?via=LEASE
+Content-Type: application/json
+
+{"price": 2490.00}
