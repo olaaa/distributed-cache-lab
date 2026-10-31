@@ -53,7 +53,7 @@ private Mono<Product> loadFromRedisOrSource(long id) {
 
 ## Почему не `@Cacheable`
 
-В Spring нет готового двухуровневого `CacheManager`. `CompositeCacheManager` похож по названию, но слоёв не строит: его `getCache` перебирает менеджеры и возвращает кэш первого, который знает это имя. Javadoc: «Composite CacheManager implementation that iterates over a given collection of delegate CacheManager instances». То есть значение лежит либо в Caffeine, либо в Redis, а не в обоих. Двухуровневый кэш пишут вручную, как здесь, или своей реализацией `Cache`, которая внутри обращается к двум уровням.
+В Spring нет готового двухуровневого `CacheManager`. `CompositeCacheManager` похож по названию, но слоёв не строит: его `getCache` перебирает менеджеры и возвращает кэш первого, который знает это имя. Javadoc: «Составная реализация CacheManager, которая перебирает заданный набор делегатов CacheManager». То есть значение лежит либо в Caffeine, либо в Redis, а не в обоих. Двухуровневый кэш пишут вручную, как здесь, или своей реализацией `Cache`, которая внутри обращается к двум уровням.
 
 ## Сроки уровней
 

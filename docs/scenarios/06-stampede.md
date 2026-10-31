@@ -14,7 +14,7 @@
 
 ## `sync = true` с Redis
 
-Документация Spring обещает: «you can use the sync attribute to instruct the underlying cache provider to lock the cache entry while the value is being computed». И про реактивные методы: «Such CompletableFuture and reactive adaptation also works for synchronized caching, computing the value only once in case of a concurrent cache miss». Но рядом оговорка: «This is an optional feature, and your favorite cache library may not support it».
+Документация Spring обещает: «атрибутом sync можно поручить реализации кэша заблокировать запись, пока значение вычисляется». И про реактивные методы: «такая поддержка CompletableFuture и реактивных типов работает и с синхронизированным кэшированием: при одновременных промахах значение вычисляется только один раз». Но рядом оговорка: «Это необязательная возможность, и ваша любимая библиотека кэширования может её не поддерживать».
 
 Объединяет промахи не Spring, а реализация `Cache`. Для `Mono` Spring вызывает `Cache.retrieve(key, valueLoader)`. У Caffeine это `AsyncCache.get`: он кладёт в карту future загрузки, и остальные промахи ждут ту же future. У Redis — `RedisCache.retrieve` из Spring Data Redis 4.1.2:
 
@@ -38,9 +38,9 @@ public <T> CompletableFuture<T> retrieve(Object key, Supplier<CompletableFuture<
 
 ## Одна загрузка на все реплики: аренда с ожиданием
 
-Защита — аренда из сценария 5, но чтение, которому аренда не досталась, не идёт в базу само, а ждёт. Так делает Facebook. Описание проблемы: «A thundering herd happens when a specific key undergoes heavy read and write activity». Решение: «A slight modification to leases also mitigates thundering herds». Сервер выдаёт аренду на ключ не чаще раза в 10 секунд, остальные клиенты получают «a special notification telling the client to wait a short amount of time». И дальше: «Typically, the client with the lease will have successfully set the data within a few milliseconds. Thus, when waiting clients retry the request, the data is often present in cache».
+Защита — аренда из сценария 5, но чтение, которому аренда не досталась, не идёт в базу само, а ждёт. Так делает Facebook. Описание проблемы: «Лавина промахов случается, когда конкретный ключ интенсивно читают и записывают». Решение: «Небольшое изменение аренды заодно смягчает лавину промахов». Сервер выдаёт аренду на ключ не чаще раза в 10 секунд, остальные клиенты получают «специальное уведомление: немного подождать». И дальше: «Обычно клиент с арендой успевает записать данные за несколько миллисекунд. Поэтому, когда ждущие клиенты повторяют запрос, данные часто уже в кэше».
 
-Эффект, который Facebook замерил за неделю на ключах, склонных к такой лавине: «Without leases, all of the cache misses resulted in a peak database query rate of 17K/s», «With leases, the peak database query rate was 1.3K/s».
+Эффект, который Facebook замерил за неделю на ключах, склонных к такой лавине: «Без аренды промахи кэша давали пиковую нагрузку на базу 17 тысяч запросов в секунду», «С арендой пиковая нагрузка на базу составила 1,3 тысячи запросов в секунду».
 
 `StampedeLeaseProductService`:
 
@@ -81,7 +81,7 @@ private Mono<Product> leaseOrWait(long id, long waitDeadline) {
 Кратко, в лаборатории не проверялись:
 
 - **Обновлять заранее**, пока значение не истекло (refresh-ahead, сценарий 7 caching-lab): горячий ключ не истекает вовсе, промаха нет. Не помогает после удаления ключа при изменении.
-- **Вероятностное досрочное обновление** — каждое чтение с небольшой вероятностью, растущей к концу срока, обновляет значение заранее. Статья «Optimal Probabilistic Cache Stampede Prevention»: «to let the processes that perform such requests to randomly ask for a regeneration before the expiration time of the item».
+- **Вероятностное досрочное обновление** — каждое чтение с небольшой вероятностью, растущей к концу срока, обновляет значение заранее. Статья «Optimal Probabilistic Cache Stampede Prevention»: «позволить процессам, которые выполняют такие запросы, случайным образом запрашивать пересчёт до истечения срока элемента».
 - **Разброс срока жизни** (сценарий 2) — от другой беды: одновременного истечения многих разных ключей. От лавины на одном ключе он не спасает.
 
 ## Что проверяют тесты

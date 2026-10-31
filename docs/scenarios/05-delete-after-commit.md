@@ -17,7 +17,7 @@
 Изменение могло бы сразу записать в Redis новое значение. Удаляют по двум причинам:
 
 - Два почти одновременных изменения могут записать значения в Redis в другом порядке, чем закоммитили их в базу, и в кэше останется не последнее. С удалением порядок не важен: следующее чтение возьмёт то, что действительно лежит в базе. Тот же довод — в сценарии 5 caching-lab и в сценарии 4 здесь.
-- Удаление идемпотентно: повторить его безопасно. Facebook в статье о memcache: «We choose to delete cached data instead of updating it because deletes are idempotent».
+- Удаление идемпотентно: повторить его безопасно. Facebook в статье о memcache: «Мы удаляем данные из кэша, а не обновляем их, потому что удаление идемпотентно».
 
 ## Почему после коммита
 
@@ -39,9 +39,9 @@ public Mono<Boolean> changePrice(long id, BigDecimal price) {
 }
 ```
 
-`UPDATE` идёт без явной транзакции и коммитится сразу. `@CacheEvict` по умолчанию удаляет ключ после метода. Javadoc `beforeInvocation`: «Defaults to false, meaning that the cache eviction operation will occur after the advised method is invoked successfully». Для метода, который возвращает `Mono`, «после метода» — когда `Mono` завершился, то есть после `UPDATE`.
+`UPDATE` идёт без явной транзакции и коммитится сразу. `@CacheEvict` по умолчанию удаляет ключ после метода. Javadoc `beforeInvocation`: «По умолчанию false: удаление из кэша выполняется после того, как вызов метода успешно завершился». Для метода, который возвращает `Mono`, «после метода» — когда `Mono` завершился, то есть после `UPDATE`.
 
-Если изменение идёт в транзакции, удаление нужно привязать к её коммиту. Для обычного, не реактивного стека в Spring есть `TransactionAwareCacheDecorator` (у `RedisCacheManager` включается через `transactionAware()`): «performing the actual cache put/evict/clear operation only in the after-commit phase of a successful transaction». Он опирается на `TransactionSynchronizationManager`, привязанный к потоку, поэтому для реактивных транзакций он, вероятно, не сработает — это вывод из устройства, в лаборатории не проверялся.
+Если изменение идёт в транзакции, удаление нужно привязать к её коммиту. Для обычного, не реактивного стека в Spring есть `TransactionAwareCacheDecorator` (у `RedisCacheManager` включается через `transactionAware()`): «само добавление, удаление и очистка кэша выполняются только в фазе после коммита успешной транзакции». Он опирается на `TransactionSynchronizationManager`, привязанный к потоку, поэтому для реактивных транзакций он, вероятно, не сработает — это вывод из устройства, в лаборатории не проверялся.
 
 ## Гонка, которую удаление после коммита не закрывает
 
@@ -64,7 +64,7 @@ sequenceDiagram
 
 Чтение прочитало базу до коммита, а записало в Redis после удаления. Удалять уже нечего: ключ появился позже. Следующие 10 минут все реплики отдают 2490.00, хотя в базе 1990.00.
 
-Facebook называет это stale set: «A stale set occurs when a web server sets a value in memcache that does not reflect the latest value that should be cached. This can occur when concurrent updates to memcache get reordered».
+Facebook называет это stale set: «Устаревшая запись случается, когда веб-сервер записывает в memcache значение, которое уже не совпадает с последним значением, подлежащим кэшированию. Так бывает, когда одновременные изменения memcache выполняются не в том порядке».
 
 Окно маленькое: нужна пауза в чтении ровно между `SELECT` и `SET`. Но под нагрузкой такие паузы случаются, а цена ошибки — весь срок жизни записи. Это вывод, не замер. Чем длиннее срок жизни, тем дороже такая гонка.
 
@@ -74,9 +74,9 @@ Facebook называет это stale set: «A stale set occurs when a web serv
 
 В memcache у Facebook защита встроена в сам сервер кэша — аренда:
 
-- «The lease is a 64-bit token bound to the specific key the client originally requested.»
-- «The client provides the lease token when setting the value in the cache. With the lease token, memcached can verify and determine whether the data should be stored and thus arbitrate concurrent writes.»
-- «Verification can fail if memcached has invalidated the lease token due to receiving a delete request for that item.»
+- «Аренда — это 64-битный маркер, привязанный к тому ключу, который клиент изначально запросил.»
+- «Записывая значение в кэш, клиент передаёт маркер аренды. По маркеру memcached проверяет, нужно ли сохранять данные, и так разрешает спор одновременных записей.»
+- «Проверка не пройдёт, если memcached аннулировал маркер аренды, потому что получил запрос на удаление этого ключа.»
 
 В Redis аренды нет, но её можно собрать из двух вещей: `SET … NX` и Lua-скрипта. `LeaseProductService` делает так:
 
@@ -98,7 +98,7 @@ return 0
 
 **Почему аренду берут до чтения базы.** Пусть чтение увидело старую цену. Значит, оно читало базу до коммита. Удаление идёт после коммита, а аренду чтение взяло до `SELECT` — значит, аренда уже была на месте, когда пришло удаление, и удаление её сняло. Если бы аренду брали после `SELECT`, чтение могло бы взять её уже после удаления и записать старую цену.
 
-**Почему проверка и запись — один скрипт.** Если сначала `GET` аренды, а потом `SET` значения отдельными командами, удаление может пройти между ними, и устаревшая запись проскочит. Lua-скрипт Redis выполняет целиком, ничего не вклинится. Документация Redis: «Redis guarantees the script's atomic execution. While executing the script, all server activities are blocked during its entire runtime».
+**Почему проверка и запись — один скрипт.** Если сначала `GET` аренды, а потом `SET` значения отдельными командами, удаление может пройти между ними, и устаревшая запись проскочит. Lua-скрипт Redis выполняет целиком, ничего не вклинится. Документация Redis: «Redis гарантирует атомарное выполнение скрипта. Пока скрипт выполняется, вся остальная работа сервера заблокирована».
 
 **Что ещё следует из устройства:**
 
