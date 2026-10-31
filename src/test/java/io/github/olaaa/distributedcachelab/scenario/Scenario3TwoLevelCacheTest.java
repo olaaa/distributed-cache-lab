@@ -65,6 +65,7 @@ class Scenario3TwoLevelCacheTest extends ScenarioTestSupport {
                 .isEqualTo(1);
     }
 
+//    Локальная копия остаётся устаревшей, пока не истечёт локальный срок жизни
     @Test
     void localCopyStaysStaleUntilLocalTimeToLiveExpires() {
         replicaA.findById(KETTLE_ID).block();

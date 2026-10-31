@@ -13,7 +13,7 @@ import org.springframework.data.redis.serializer.JacksonJsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext.SerializationPair;
 
 @Configuration(proxyBeanMethods = false)
-@EnableCaching
+@EnableCaching // включаем перехват
 public class CacheConfiguration {
 
     public static final Duration PRODUCTS_TTL = Duration.ofMinutes(10);
