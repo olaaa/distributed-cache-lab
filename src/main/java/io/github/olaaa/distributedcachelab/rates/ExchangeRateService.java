@@ -26,7 +26,8 @@ import reactor.core.publisher.Mono;
  * - Каждый полученный курс сохраняется в Redis как последний известный (rates:last::<валюта>, без срока
  *   жизни). Поставщик недоступен — загрузчик берёт курс оттуда. Это выручает реплику, у которой
  *   локального кэша ещё нет: новую или перезапущенную.
- * - Курс старше MAX_AGE не отдаётся: устаревание допустимо, но не бесконечно.
+ * - Курс старше MAX_AGE не отдаётся: устаревание допустимо, но не бесконечно. Такой курс сначала
+ *   пробуем обновить, и только если не вышло — ошибка.
  * - Прогрев (warmUp) загружает все валюты до того, как приложение начнёт принимать запросы.
  */
 @Service
@@ -68,17 +69,31 @@ public class ExchangeRateService implements LabCache {
     }
 
     /*
-     * Курс для ответа. Если он старше MAX_AGE — ошибка: поставщик давно недоступен,
-     * и считать по такому курсу нельзя.
+     * Курс для ответа. Обычно — из кэша сразу, даже если пора обновлять: обновление идёт в фоне.
+     * Но курс старше MAX_AGE отдавать нельзя — тогда ждём обновления, как при промахе.
      */
     public Mono<ExchangeRate> findRate(String currency) {
         return Mono.fromFuture(() -> rates.get(currency), true)
-                .flatMap(rate -> {
-                    Duration age = Duration.between(rate.asOf(), clock.instant());
-                    return age.compareTo(MAX_AGE) > 0
-                            ? Mono.error(new StaleRateException(currency, age))
-                            : Mono.just(rate);
-                });
+                .flatMap(rate -> isFresh(rate) ? Mono.just(rate) : awaitRefresh(currency, rate));
+    }
+
+    /*
+     * Курс в кэше старше MAX_AGE. Это не значит, что поставщик недоступен: может быть, к курсу просто
+     * давно не обращались — ночью, в выходные, — и обновлять его было некому. Поэтому сначала ждём
+     * обновления. refresh возвращает уже идущее обновление, если get его запустил, — второго запроса
+     * к поставщику нет. Обновить не удалось или и новый курс слишком старый — StaleRateException, 503.
+     */
+    private Mono<ExchangeRate> awaitRefresh(String currency, ExchangeRate tooOld) {
+        return Mono.fromFuture(() -> rates.synchronous().refresh(currency), true)
+                .onErrorResume(refreshFailed -> Mono.empty())
+                .defaultIfEmpty(tooOld)
+                .flatMap(rate -> isFresh(rate)
+                        ? Mono.just(rate)
+                        : Mono.error(new StaleRateException(currency, Duration.between(rate.asOf(), clock.instant()))));
+    }
+
+    private boolean isFresh(ExchangeRate rate) {
+        return Duration.between(rate.asOf(), clock.instant()).compareTo(MAX_AGE) <= 0;
     }
 
     /* Прогрев: загрузить все валюты. Недоступные — пропустить: приложение стартует и без них. */

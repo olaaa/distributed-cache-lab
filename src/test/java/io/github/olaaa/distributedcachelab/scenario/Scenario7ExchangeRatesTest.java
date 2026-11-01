@@ -106,6 +106,22 @@ class Scenario7ExchangeRatesTest extends ScenarioTestSupport {
     }
 
     @Test
+    void firstRequestAfterQuietPeriodLongerThanMaxAgeWaitsForFreshRate() {
+        replicaA.findRate("USD").block();
+        awaitEntryWritten(() -> replicaA.localAgeOf("USD"));
+
+        /* Больше суток к курсу никто не обращался — обновлять его было некому. Поставщик доступен. */
+        ticker.advance(ExchangeRateService.MAX_AGE.plusHours(1));
+
+        assertThat(replicaA.findRate("USD").block().asOf())
+                .as("суточный курс не отдан и не отвергнут: запрос дождался обновления")
+                .isEqualTo(clock.instant());
+        assertThat(rateProvider.callCount())
+                .as("get запустил обновление, refresh вернул его же — к поставщику один запрос")
+                .isEqualTo(2);
+    }
+
+    @Test
     void newReplicaStartsFromLastKnownRatesWhenProviderIsDown() {
         replicaA.warmUp().block();
         rateProvider.setFailing(true);
