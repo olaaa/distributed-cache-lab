@@ -55,11 +55,28 @@ public class ExchangeRateService implements LabCache {
                 .ticker(cacheTicker)
                 .refreshAfterWrite(REFRESH_AFTER)
                 .buildAsync(new AsyncCacheLoader<String, ExchangeRate>() {
+                    /*
+                     * Первая загрузка: курса этой валюты в кэше нет. Caffeine вызывает его из get(currency)
+                     * при промахе и из refresh(currency), если значения в кэше нет.
+                     * Пока future не завершился, одновременные get той же валюты ждут его же, второй
+                     * загрузки нет. Future завершился ошибкой — Caffeine убирает его из кэша, и следующий
+                     * get загрузит заново. toFuture() подписывается сразу: загрузка начинается при вызове.
+                     */
                     @Override
                     public CompletableFuture<ExchangeRate> asyncLoad(String currency, Executor executor) {
                         return load(currency).toFuture();
                     }
 
+                    /*
+                     * Фоновое обновление: курс в кэше есть, oldRate — он. Caffeine вызывает его:
+                     * - из get(currency), когда с записи курса прошло больше REFRESH_AFTER: get сразу
+                     *   отдаёт oldRate, а обновление идёт в фоне;
+                     * - из refresh(currency), если обновление этой валюты ещё не идёт; если идёт —
+                     *   refresh возвращает его future и сюда не заходит.
+                     * Новый курс заменяет oldRate в кэше и запускает отсчёт REFRESH_AFTER заново. Ошибка —
+                     * Caffeine оставляет oldRate и пишет ошибку в журнал; время записи не сдвигается,
+                     * поэтому следующий же get снова запустит обновление.
+                     */
                     @Override
                     public CompletableFuture<ExchangeRate> asyncReload(String currency, ExchangeRate oldRate,
                                                                        Executor executor) {
